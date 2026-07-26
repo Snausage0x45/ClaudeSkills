@@ -1,7 +1,7 @@
 # Claude Skills and Prompts
 A small collection of Claude and Claude Code skills for aiding cybersecurity analysis work. Skills are designed for Claude Code but will fallback to other methods and work with Claude Desktop as well but without as much information 
 
-## malware-analysis
+## Malware Analysis
 [malware-analysis](#malware-analysis) reverse-engineers a supplied binary (PE, DLL, driver, or shellcode) to determine whether it is malicious and how. It runs static triage — hashing, PE parsing, section entropy, import and string extraction, packer heuristics — then detonates the sample inside the sogen user-space emulator to unpack later stages, resolve runtime-loaded imports, and dump decrypted strings from memory, recursing through each stage until nothing unpacks further. It maps the resulting capabilities, anti-analysis techniques, and C2 infrastructure to MITRE ATT&CK IDs and writes a defanged report.md leading with a verdict (malicious, benign, or inconclusive) and confidence. The sample runs only under emulation and all tooling runs in disposable uv environments, so the code never executes on the host.
 ### Usage
 The skill creates a copy of the sogen root directory under /temp/ and copies the payload there for emulation, it assumes a golden-image root at /Users/user/root and will need to be updated in kind. In the prompt tell it:
@@ -9,15 +9,15 @@ The skill creates a copy of the sogen root directory under /temp/ and copies the
 * The full path of the working directory it should use
 * The full path to the sample
 
-## netcheck
+## Network OSINT Investigation
 [netcheck](#netcheck) investigates a single IP address or domain and returns a security analyst's briefing — a risk verdict (Low, Medium, or High), a one-paragraph summary, and a facts table. It pulls together ownership provenance, DNS records, hosting and ASN, exposed services and CVEs, TLS certificate history, and reputation data into one picture, weighting registration age and ownership changes most heavily. It's passive reconnaissance only: it reads what public databases already know and never scans, exploits, or logs into a target.
 
-## hashcheck
+## Hash OSINT Investigation
 [hashcheck](#hashcheck) does the same for a single file, identified by its hash (MD5, SHA-1, or SHA-256) — returning a malware analyst's briefing with a verdict (Benign, Suspicious, Malicious, or Unknown), a summary, and a facts table. It weighs multi-engine detection consensus, code-signing status, file structure like PE section entropy and packing, and sandbox behavior. Like netcheck, it's read-only: a records check on the fingerprint that never detonates or runs the sample.
 
 Both this and netcheck follow the same design — try a bundled script when the shell has internet, fall back to WebFetch in sandboxes, degrade gracefully when a source is unavailable, and write the summary in Google technical writing style (conclusion first, active voice, short sentences).
 
-## bugbounty prompt
+## Bugbount and VDP prompt
 [bugbounty_prompt](#bugbounty_prompt) a fully autonmous LLM driven scoped, authorization-gated web assessment. It accepts two modes: a program policy URL, or a user-authorized target. It first derives engagement/CONTRACT.md and builds a source-annotated scope.txt. It blocks all traffic until it verifies scope and authorization. It then runs ordered phases: passive reconnaissance, JavaScript and route mining, subdomain and HTTP enumeration, unauthenticated injection and access-control probes, framework-specific checks, and optional two-account authenticated testing. Each probe is manual, capped at three requests per second, and stops at the detection differential or out-of-band (OOB) callback. Every finding clears an impact-only validation gate — cross-account proof, body diff, and multi-stack reproduction — before it lands in FINDINGS.md. The prompt stores sanitized evidence under engagement/ and enforces the program's disclosure terms.
 
 # Skills
