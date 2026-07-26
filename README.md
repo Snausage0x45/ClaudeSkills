@@ -1,6 +1,8 @@
 # Claude Skills
 A small collection of Claude and Claude Code skills for aiding cybersecurity analysis work. Skills are designed for Claude Code but will fallback to other methods and work with Claude Desktop as well but without as much information 
 
+[malware-analysis](#malware-analysis) reverse-engineers a supplied binary (PE, DLL, driver, or shellcode) to determine whether it is malicious and how. It runs static triage — hashing, PE parsing, section entropy, import and string extraction, packer heuristics — then detonates the sample inside the sogen user-space emulator to unpack later stages, resolve runtime-loaded imports, and dump decrypted strings from memory, recursing through each stage until nothing unpacks further. It maps the resulting capabilities, anti-analysis techniques, and C2 infrastructure to MITRE ATT&CK IDs and writes a defanged report.md leading with a verdict (malicious, benign, or inconclusive) and confidence. The sample runs only under emulation and all tooling runs in disposable uv environments, so the code never executes on the host.
+
 [netcheck](#netcheck) investigates a single IP address or domain and returns a security analyst's briefing — a risk verdict (Low, Medium, or High), a one-paragraph summary, and a facts table. It pulls together ownership provenance, DNS records, hosting and ASN, exposed services and CVEs, TLS certificate history, and reputation data into one picture, weighting registration age and ownership changes most heavily. It's passive reconnaissance only: it reads what public databases already know and never scans, exploits, or logs into a target.
 
 [hashcheck](#hashcheck) does the same for a single file, identified by its hash (MD5, SHA-1, or SHA-256) — returning a malware analyst's briefing with a verdict (Benign, Suspicious, Malicious, or Unknown), a summary, and a facts table. It weighs multi-engine detection consensus, code-signing status, file structure like PE section entropy and packing, and sandbox behavior. Like netcheck, it's read-only: a records check on the fingerprint that never detonates or runs the sample.
@@ -9,6 +11,66 @@ Both follow the same design — try a bundled script when the shell has internet
 
 
 # Skills
+## malware-analysis
+
+malware-analysis reverse-engineers a supplied binary to determine whether it is malicious or benign and produces a comprehensive analyst report. It unpacks multi-stage payloads, recovers encrypted strings, resolves dynamic imports, catalogues evasion techniques, extracts command-and-control (C2) infrastructure, and writes it all to `report.md`.
+
+This is defensive work. The deliverable is understanding — every indicator it surfaces helps someone detect or contain the threat, never redeploy it.
+
+### When it triggers
+
+The skill runs when you hand over a file, sample, executable, DLL, driver, or shellcode blob and ask Claude to analyze it, reverse engineer it, unpack it, determine if it is malware, decrypt its strings, resolve its imports, find its C2, or write a malware report — even without the word "malware." It also triggers when you ask it to triage a suspicious download or email attachment.
+
+### Containment
+
+Two rules keep the sample and its tooling from touching the host:
+
+- **The sample never runs on the analysis host.** The only place it executes is inside **sogen**, a Windows user-space emulator that runs the code at the syscall level with full visibility and no access to the real machine.
+- **Every helper runs in a disposable `uv` environment.** Static parsers, the sogen harness, and YARA all run through `uv run --with ...`, which builds an ephemeral environment and leaves the host interpreter untouched — never a bare `pip install`.
+
+All indicators are defanged everywhere they appear (`hxxp://`, `evil[.]com`, `10[.]0[.]0[.]5`) so nothing in the report can be clicked or resolved by accident. If sogen cannot be obtained, the skill falls back to static-only analysis and states the limitation rather than detonating on the host.
+
+### How the analysis flows
+
+The work runs in phases, static before dynamic, unpacking recursively:
+
+1. **Static triage** — hash the sample, parse the PE (sections, entropy, imports, signature, timestamp), extract strings, and flag packer and evasion tells.
+2. **Form hypotheses** — decide what the sample is and write the questions dynamic analysis must answer.
+3. **Dynamic analysis in sogen** — detonate under emulation to unpack later stages, resolve runtime imports, and recover decrypted strings from memory.
+4. **Recurse** — each dumped stage goes back through the pipeline until nothing unpacks further.
+5. **Catalogue** — map capabilities, evasion, and C2 to technique families and MITRE ATT&CK IDs.
+6. **Write the report** — synthesize everything into `report.md`.
+
+### Output
+
+The deliverable is always `report.md`. It leads with a **determination** — a verdict of `Malicious`, `Benign`, or `Suspicious / inconclusive`, paired with a confidence level (high, medium, or low) and the evidence behind it. A named family is given only when the evidence supports it; otherwise the family is marked unidentified rather than guessed.
+
+The report covers, at minimum: determination, executive summary, sample metadata, per-stage analysis, capabilities, anti-analysis techniques, command and control, indicators of compromise, MITRE ATT&CK mapping, and detection and response recommendations. It is written in Google technical-writing style — conclusion first, short active sentences, acronyms expanded on first use, tables for structured data.
+
+### Requirements
+
+- **sogen** — the Windows user-space emulator, installed on demand via `uv run --with sogen`. Needs an emulation root (real Windows system DLLs); the harness copies the canonical root to a disposable `/tmp/root` on first run, or fetches `https://sogen.dev/root.zip`.
+- **uv** — creates the disposable Python environments every helper runs in.
+- **A shell with egress** — to install packages and fetch the emulation root.
+
+Optional Python packages (`pefile`, `capstone`, `yara-python`, `signify`) are added per-command; the triage script degrades cleanly when any are unavailable.
+
+### Files
+
+| Path | Purpose |
+|---|---|
+| `SKILL.md` | Full workflow, containment rules, and report requirements. |
+| `scripts/static_triage.py` | Safe static triage: hashing, PE parsing, entropy, strings, packer heuristics, YARA, Authenticode. Run first, every time. |
+| `scripts/sogen_harness.py` | Adaptable sogen harness with common hooks and a memory-dumping helper for capturing unpacked stages. |
+| `assets/rules/triage.yar` | Bundled YARA rules for static triage. |
+| `references/sogen-usage.md` | How to drive sogen for unpacking, import resolution, and string recovery. |
+| `references/analysis-playbook.md` | Technique catalogue: packers, string encryption, anti-analysis families, capabilities, and C2 shapes. |
+| `references/report-template.md` | The exact `report.md` structure and Google-style tone. |
+
+### Scope
+
+malware-analysis studies an existing artifact to understand and defend against it. It does not build, improve, or repackage anything harmful, and it never runs the sample outside emulation.
+
 ## hashcheck
 
 hashcheck runs a passive OSINT investigation on one file hash (MD5, SHA-1, or SHA-256) and returns a malware analyst's briefing: a risk verdict, a one-paragraph summary, and a facts table.
