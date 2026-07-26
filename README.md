@@ -1,4 +1,4 @@
-# Claude Skills
+# Claude Skills and Prompts
 A small collection of Claude and Claude Code skills for aiding cybersecurity analysis work. Skills are designed for Claude Code but will fallback to other methods and work with Claude Desktop as well but without as much information 
 
 ## malware-analysis
@@ -17,6 +17,8 @@ The skill creates a copy of the sogen root directory under /temp/ and copies the
 
 Both this and netcheck follow the same design — try a bundled script when the shell has internet, fall back to WebFetch in sandboxes, degrade gracefully when a source is unavailable, and write the summary in Google technical writing style (conclusion first, active voice, short sentences).
 
+## bugbounty prompt
+Fully autonmous seucrity testing, the Authorized Bug Bounty and VDP prompt runs a scoped, authorization-gated web assessment. It accepts two modes: a program policy URL, or a user-authorized target. It first derives engagement/CONTRACT.md and builds a source-annotated scope.txt. It blocks all traffic until it verifies scope and authorization. It then runs ordered phases: passive reconnaissance, JavaScript and route mining, subdomain and HTTP enumeration, unauthenticated injection and access-control probes, framework-specific checks, and optional two-account authenticated testing. Each probe is manual, capped at three requests per second, and stops at the detection differential or out-of-band (OOB) callback. Every finding clears an impact-only validation gate — cross-account proof, body diff, and multi-stack reproduction — before it lands in FINDINGS.md. The prompt stores sanitized evidence under engagement/ and enforces the program's disclosure terms.
 
 # Skills
 ## malware-analysis
@@ -224,6 +226,73 @@ netcheck reads optional keys from environment variables. Sources without a key d
 | `scripts/netcheck.py` | Runs all lookups and prints one JSON object. |
 | `references/sources.md` | Full endpoint catalog, auth details, and failure behavior. |
 
-## Scope
+### Scope
 
 netcheck is passive, defensive reconnaissance only. If you ask it to scan, exploit, or log in, it declines that part and explains that it is read-only.
+
+## Authorized Bug Bounty / VDP Testing Run
+
+This prompt drives an authorized web security assessment against a bug bounty program, a vulnerability disclosure program (VDP), or a target the user asserts they own or hold written permission to test. It derives an engagement contract, maps the attack surface passively, runs manual and targeted vulnerability probes in a fixed order, and writes validated findings to an `engagement/` directory.
+
+Every action is gated on authorization and scope. The run tests only what a policy or the user explicitly authorizes, uses manual low-rate probes, and stops at proof rather than exploitation.
+
+### Inputs
+
+The prompt takes one of two inputs:
+
+- **Mode A — program policy.** `{{PROGRAM_URL}}`: a public policy page (HackerOne, Bugcrowd, Intigriti, a self-hosted VDP, or a `/.well-known/security.txt`). The run extracts rules of engagement, scope, and severity guidance from it.
+- **Mode B — direct target.** `{{TARGET_URL}}`: a domain or URL plus the user's explicit statement that testing is authorized. The run records the authorization and treats the standing rules as the full rule set.
+
+### Authorization and scope gate
+
+Before any request reaches a target, the run derives an engagement contract in `engagement/CONTRACT.md`:
+
+- In Mode A, it fetches the policy and records the operator, rules of engagement, in- and out-of-scope classes, severity guidance, and the snapshot date. If it cannot fetch the policy, it stops.
+- In Mode B, it records the user's exact authorization statement and its basis. If authorization is ambiguous or absent, it asks once; if the user cannot assert it, it stops.
+
+Each in-scope host is written to `engagement/scope.txt`, annotated `policy-listed`, `scope-page`, `user-authorized`, or `inferred`. Only the first three are tested directly; anything `inferred` needs a one-line user confirmation first. Recon-surfaced assets in third-party namespaces stay quarantined until a concrete ownership signal ties them to the target.
+
+### Standing rules
+
+These defaults apply unless a live policy or the user's constraints override them:
+
+- Rate limit of three requests per second, with back-off on 429s or WAF escalation.
+- Manual, targeted probes only — no automated scanning, DoS, brute forcing, password spraying, or social engineering.
+- No data modification or destruction; access the minimum needed to prove a finding.
+- Stop and report on any unauthorized access to sensitive data, accounts, or command execution.
+- Log every request to `engagement/requests.log`; keep all work products under `engagement/`.
+- On a confirmed block, slow down — never rotate IPs or infrastructure to evade it.
+
+### Workflow
+
+The run tracks progress in `engagement/STATE.md` and executes phases in order:
+
+- **Recon (passive).** Certificate-transparency logs, Wayback and Common Crawl, public DNS, dangling-CNAME checks, org OSINT over public repos and SaaS workspaces, breach corpora, public CI/CD exposure, and ownership-gated cloud-asset probes — all against public APIs, filtered to scope.
+- **Phase 1 — JS and route mining.** Local, zero-request analysis of JS bundles for API routes, DOM-XSS sinks, secrets, source maps, and historical endpoint diffs.
+- **Phase 1.5 — Subdomain and HTTP enumeration.** Passive-first host discovery, HTTP fingerprinting, vhost cross-probes, and subdomain-takeover impact escalation.
+- **Phase 2 — Unauthenticated testing.** Baseline-first probes for access control, injection (SQLi, SSRF, SSTI, XXE, command injection, LFI, NoSQL), XSS, CORS, open redirect, cache deception, and more — one targeted request per endpoint, judged by response delta.
+- **Phase 2.5 — Framework-specific probes.** Fingerprint-gated checks for Next.js, Laravel, Spring Boot, ASP.NET, Jenkins, Kubernetes, gRPC, OData, and others.
+- **Phase 3 — Authenticated testing.** Runs only if the user supplies two test accounts they own. Covers IDOR/BOLA, privilege escalation, stored XSS, mass assignment, CSRF, session and JWT handling, business logic, MFA bypass, and account-recovery flows.
+
+### Validation discipline
+
+Before writing anything up, the run applies an impact-only filter. Missing headers, stack traces, and version banners are context, never standalone findings. Access-control findings need cross-account proof; bypass claims need a response-body differential; timing claims need at least ten interleaved trials at 2σ. Any Critical or High is reproduced with two independent HTTP stacks, and severity is judged against the program's guidance rather than inflated.
+
+### Output
+
+All artifacts live under `engagement/`:
+
+| Path | Contents |
+|---|---|
+| `CONTRACT.md` | Authorization, rules of engagement, scope sources, and snapshot date. |
+| `scope.txt` | In-scope hosts, one per line, each annotated with its source. |
+| `STATE.md` | Recon and phase checklist; prevents repeated work. |
+| `requests.log` | One line per request: timestamp, host, method, path, status. |
+| `findings/` | Request/response pairs supporting each finding. |
+| `FINDINGS.md` | Summary table: host, endpoint, class, severity, evidence, reproduction. |
+
+Evidence is sanitized — secrets stripped, victim PII redacted, HARs cleaned, test credentials rotated after submission. The run honors the program's or user's disclosure terms and securely deletes `engagement/` once reports are submitted.
+
+### Scope and safety
+
+This prompt is for authorized testing only. It refuses to proceed on unverified authorization, tests only confirmed-in-scope assets, and stops at the detection differential or out-of-band callback that proves a finding — it never iterates to extract data, escalates to a shell, or poisons other users' traffic.
