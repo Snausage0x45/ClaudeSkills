@@ -1,6 +1,15 @@
 # Claude Skills and Prompts
 A small collection of Claude and Claude Code skills for aiding cybersecurity analysis work. Skills are designed for Claude Code but will fallback to other methods and work with Claude Desktop as well but without as much information 
 
+| Tool | Purpose |
+|---|---|
+| [infragrapher](#infragrapher) | Maps attacker infrastructure from a seed of a domain, URL, or IP address, finds novel indicators, and creates a 3d graph |
+| [malware-analysis](#malware-analysis-1) | Static and dynamic malware analysis and reverse engineering using sogen and uv |
+| [netcheck](#netcheck) | Network OSINT investigation |
+| [hashcheck](#hashcheck) | File and Hash OSINT investigation |
+| [bugbounty_prompt](#bugbounty_prompt) | Turns a local LLM or Kimi k3 into an automated pen tester of a given site, domain or scope |
+
+
 ## Attacker Infrastructure Discovery and Graphing
 [infragrapher](#infragrapher) infragrapher is an Agent Skill that maps the infrastructure surrounding a single seed indicator — a domain, URL, or IP address — and returns an interactive 3D graph alongside a written analyst briefing. It fingerprints the seed across registration, DNS, hosting, certificate transparency, and passive DNS records, and where the runtime permits direct connections, it also collects JARM TLS fingerprints, Shodan-compatible favicon hashes, HTTP header shapes, and embedded tracking identifiers. It then pivots on those fingerprints to discover infrastructure the same operator runs, rating every link strong, medium, or weak, because a shared certificate proves common ownership while a shared content delivery network proves nothing. Expansion runs two hops from the seed under a 40-to-70-node budget, and the second hop expands only strongly linked domains and IP addresses — never shared-attribute nodes such as favicon hashes or autonomous system numbers, which fan out to thousands of unrelated hosts. Six standard-library Python scripts implement the workflow: collect.py runs the passive lookups in parallel, opsec_check.py reports the egress IP address a target would log, fingerprint.py gathers the active signals behind a required acknowledgment flag, build_graph.py renders the graph, diff_graph.py compares two runs to support monitoring, and export_ioc.py emits STIX 2.1, MISP, CSV, or blocklist output with confidence preserved. The skill detects whether its runtime has shell network access and degrades to a fetch-tool-only path when it does not, recording every source it could not reach in the briefing rather than presenting partial coverage as complete.
 
