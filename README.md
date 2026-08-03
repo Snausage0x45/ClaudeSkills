@@ -1,6 +1,9 @@
 # Claude Skills and Prompts
 A small collection of Claude and Claude Code skills for aiding cybersecurity analysis work. Skills are designed for Claude Code but will fallback to other methods and work with Claude Desktop as well but without as much information 
 
+## Attacker Infrastructure Discovery and Graphing
+[infragrapher](#infragrapher) infragrapher is an Agent Skill that maps the infrastructure surrounding a single seed indicator — a domain, URL, or IP address — and returns an interactive 3D graph alongside a written analyst briefing. It fingerprints the seed across registration, DNS, hosting, certificate transparency, and passive DNS records, and where the runtime permits direct connections, it also collects JARM TLS fingerprints, Shodan-compatible favicon hashes, HTTP header shapes, and embedded tracking identifiers. It then pivots on those fingerprints to discover infrastructure the same operator runs, rating every link strong, medium, or weak, because a shared certificate proves common ownership while a shared content delivery network proves nothing. Expansion runs two hops from the seed under a 40-to-70-node budget, and the second hop expands only strongly linked domains and IP addresses — never shared-attribute nodes such as favicon hashes or autonomous system numbers, which fan out to thousands of unrelated hosts. Six standard-library Python scripts implement the workflow: collect.py runs the passive lookups in parallel, opsec_check.py reports the egress IP address a target would log, fingerprint.py gathers the active signals behind a required acknowledgment flag, build_graph.py renders the graph, diff_graph.py compares two runs to support monitoring, and export_ioc.py emits STIX 2.1, MISP, CSV, or blocklist output with confidence preserved. The skill detects whether its runtime has shell network access and degrades to a fetch-tool-only path when it does not, recording every source it could not reach in the briefing rather than presenting partial coverage as complete.
+
 ## Malware Analysis
 [malware-analysis](#malware-analysis-1) reverse-engineers a supplied binary (PE, DLL, driver, or shellcode) to determine whether it is malicious and how. It runs static triage — hashing, PE parsing, section entropy, import and string extraction, packer heuristics — then detonates the sample inside the sogen user-space emulator to unpack later stages, resolve runtime-loaded imports, and dump decrypted strings from memory, recursing through each stage until nothing unpacks further. It maps the resulting capabilities, anti-analysis techniques, and C2 infrastructure to MITRE ATT&CK IDs and writes a defanged report.md leading with a verdict (malicious, benign, or inconclusive) and confidence. The sample runs only under emulation and all tooling runs in disposable uv environments, so the code never executes on the host.
 ### Usage
@@ -21,6 +24,173 @@ Both this and netcheck follow the same design — try a bundled script when the 
 [bugbounty_prompt](#bugbounty_prompt) a fully autonmous LLM driven scoped, authorization-gated web assessment. It accepts two modes: a program policy URL, or a user-authorized target. It first derives engagement/CONTRACT.md and builds a source-annotated scope.txt. It blocks all traffic until it verifies scope and authorization. It then runs ordered phases: passive reconnaissance, JavaScript and route mining, subdomain and HTTP enumeration, unauthenticated injection and access-control probes, framework-specific checks, and optional two-account authenticated testing. Each probe is manual, capped at three requests per second, and stops at the detection differential or out-of-band (OOB) callback. Every finding clears an impact-only validation gate — cross-account proof, body diff, and multi-stack reproduction — before it lands in FINDINGS.md. The prompt stores sanitized evidence under engagement/ and enforces the program's disclosure terms.
 
 # Skills
+## infragrapher
+ 
+Map the infrastructure behind a domain, URL, or IP address, and render it as
+an interactive 3D graph.
+ 
+infragrapher is a skill for Claude Code and other agent runtimes that
+support the [Agent Skills](https://code.claude.com/docs/en/skills) format.
+Give it one indicator. It fingerprints the host, pivots outward to find
+related infrastructure that the same operator runs, and produces two
+deliverables: a self-contained HTML graph and a written analyst briefing.
+ 
+### What it does
+ 
+A single-indicator lookup tells you about one host. infragrapher answers a
+different question: what else belongs to whoever runs this?
+ 
+It works in three stages:
+ 
+1. **Fingerprint.** Collect registration, DNS, hosting, certificates,
+   passive DNS, and exposed services. Where the environment allows it, also
+   collect active signals: JARM TLS fingerprint, favicon hash, HTTP header
+   shape, and tracking identifiers.
+2. **Pivot.** Search for other infrastructure that shares those
+   fingerprints. Each link gets a confidence rating of strong, medium, or
+   weak, because a shared certificate proves far more than a shared content
+   delivery network (CDN).
+3. **Render.** Write the result to a graph file, then convert it to one
+   HTML page with hop filters, a timeline scrubber, screenshots, and
+   per-node verdicts.
+## Requirements
+ 
+- Python 3.8 or later. The scripts use only the standard library.
+- An agent runtime that loads Agent Skills, such as Claude Code.
+- Optional: `pyjarm` for JARM fingerprints. `fingerprint.py` installs it on
+  demand and reports an honest gap if installation fails.
+### Install
+ 
+Copy the skill directory into your skills folder:
+ 
+```bash
+git clone https://github.com/<you>/infragrapher.git
+cp -r infragrapher ~/.claude/skills/
+```
+ 
+### Use
+ 
+Ask your agent in plain language:
+ 
+> Map the infrastructure connected to example.com and show me a graph.
+ 
+The agent runs the workflow itself. To use the scripts directly:
+ 
+```bash
+# 1. Collect passive data.
+python3 scripts/collect.py example.com --json collect.json
+ 
+# 2. Check what IP a target would log, before any active check.
+python3 scripts/opsec_check.py
+ 
+# 3. Fingerprint the live host, after confirming egress.
+python3 scripts/fingerprint.py example.com --ack-egress --json fp.json
+ 
+# 4. Write graph.json from what you found, then render it.
+python3 scripts/build_graph.py graph.json out.html --title "infragrapher: example.com"
+```
+ 
+`build_graph.py` renders an existing file. It does not collect data and it
+does not create the JSON for you. To start from a template, run
+`python3 scripts/build_graph.py --example graph.json`.
+ 
+### Scripts
+ 
+| Script | Purpose |
+|---|---|
+| `collect.py` | Runs every passive lookup in parallel and returns one compact JSON object. |
+| `opsec_check.py` | Reports the public IP a target would log, and judges whether it looks like a virtual private network (VPN). |
+| `fingerprint.py` | Collects active signals: JARM, favicon hash, served certificate, headers, tracking IDs. |
+| `build_graph.py` | Renders a graph JSON file as a self-contained 3D HTML page. |
+| `diff_graph.py` | Compares two graphs and marks what changed, for monitoring a seed over time. |
+| `export_ioc.py` | Exports indicators as STIX 2.1, MISP, CSV, or a plain blocklist. |
+ 
+### Two environment tiers
+ 
+infragrapher detects its environment and adapts. Run `collect.py` to find
+out which tier applies.
+ 
+| Capability | Tier A: shell with internet | Tier B: fetch tool only |
+|---|---|---|
+| Parallel collection | Yes | No |
+| Header-authenticated APIs | Yes | No |
+| JARM and favicon hash | Yes | No |
+| Tracking IDs in scripts | Yes | No |
+| Passive DNS, certificates, WHOIS, DNS | Yes | Yes |
+| Graph, timeline, diff, export | Yes | Yes |
+ 
+Tier B still supports a complete investigation. It loses the active signals,
+and the briefing records that gap.
+ 
+### Scope of reconnaissance
+ 
+Most of what infragrapher does is passive: it queries public registries,
+certificate transparency logs, passive DNS, and reputation feeds. Those
+lookups never contact the target.
+ 
+Some checks do connect to the target directly, including fetching its
+homepage, pulling its favicon, and completing TLS handshakes for JARM. This
+is the same traffic a browser or a public scanner generates, but the target
+can see it. For that reason:
+ 
+- `fingerprint.py` refuses to run without `--ack-egress`.
+- The skill instructs the agent to run `opsec_check.py` and confirm the
+  result with you before any active check.
+infragrapher does not scan port ranges, brute-force names or credentials,
+authenticate, or send payloads.
+ 
+### Optional API keys
+ 
+Every key is optional. `collect.py` reads them from the environment and
+reports which were absent.
+ 
+| Variable | Adds |
+|---|---|
+| `VT_API_KEY` | VirusTotal verdicts, tags, and passive DNS. |
+| `SHODAN_API_KEY` | Service detail, and favicon and JARM pivot search. |
+| `OTX_API_KEY` | Threat-actor and campaign context. |
+| `SECURITYTRAILS_API_KEY` | WHOIS history and reverse WHOIS. |
+| `CERTSPOTTER_API_KEY` | Higher certificate transparency rate limits. |
+ 
+`CENSYS_API_ID` and `CENSYS_API_SECRET` also unlock certificate and service
+search, but `collect.py` does not read them. Use them for the manual
+searches described in `references/pivot_sources.md`.
+ 
+### Repository layout
+ 
+```
+infragrapher/
+├── SKILL.md                    # Workflow the agent follows
+├── README.md
+├── references/
+│   ├── pivot_sources.md        # Every source: URL, fields, failure mode
+│   ├── fingerprinting.md       # What each active signal means
+│   └── graph_schema.md         # Node and edge JSON contract
+├── scripts/
+│   ├── collect.py
+│   ├── opsec_check.py
+│   ├── fingerprint.py
+│   ├── build_graph.py
+│   ├── diff_graph.py
+│   └── export_ioc.py
+└── evals/
+    └── evals.json              # Test cases
+```
+ 
+### Interpreting results
+ 
+Two cautions carry most of the analytical risk:
+ 
+- **A clean reputation is not evidence of safety.** Reputation feeds record
+  observed mass abuse. Targeted infrastructure is retired before scanners
+  sample it, so zero detections is the expected state for the most dangerous
+  hosts in a graph.
+- **Weak links are not ownership.** Shared CDN, cloud, or autonomous system
+  membership connects millions of unrelated hosts. infragrapher rates these
+  weak and skips reverse-IP pivots on shared addresses.
+
+
+
 ## malware-analysis
 
 malware-analysis reverse-engineers a supplied binary to determine whether it is malicious or benign and produces a comprehensive analyst report. It unpacks multi-stage payloads, recovers encrypted strings, resolves dynamic imports, catalogues evasion techniques, extracts command-and-control (C2) infrastructure, and writes it all to `report.md`.
